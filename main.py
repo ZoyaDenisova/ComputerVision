@@ -3,6 +3,7 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ExifTags, ImageEnhance
+from tkinter import simpledialog
 
 # matplotlib для гистограмм в Tk
 from matplotlib.figure import Figure
@@ -74,6 +75,27 @@ def pick_exif_fields(ed):
             if len(out) >= 5:
                 break
     return out
+
+# LUT для линейной (черная/белая точки) и нелинейной (гамма) коррекции Ч/Б
+def build_levels_lut(black: int, white: int, gamma: float):
+    black = max(0, min(255, int(black)))
+    white = max(0, min(255, int(white)))
+    if white <= black:
+        white = black + 1  # защита от деления на ноль
+    gamma = max(0.01, float(gamma))
+    scale = 255.0 / (white - black)
+    inv_gamma = 1.0 / gamma
+    lut = []
+    for x in range(256):
+        if x <= black:
+            y = 0.0
+        elif x >= white:
+            y = 255.0
+        else:
+            y = ((x - black) * scale)  # [0..255] линейная нормировка
+            y = (y / 255.0) ** inv_gamma * 255.0  # гамма
+        lut.append(int(round(max(0.0, min(255.0, y)))))
+    return lut
 
 # --- приложение ---
 class ImageViewer(tk.Tk):
@@ -181,6 +203,19 @@ class ImageViewer(tk.Tk):
         self.gray_btn.pack(fill=tk.X, pady=(0,6))
         self.adjust_btn = tk.Button(mods, text="Коррекция…", command=self.open_adjust_dialog, state="disabled")
         self.adjust_btn.pack(fill=tk.X)
+        self.bw_btn = tk.Button(mods, text="Коррекция Ч/Б…", command=self.open_bw_dialog, state="disabled")
+        self.bw_btn.pack(fill=tk.X, pady=(6, 6))
+
+        self.rot90cw_btn = tk.Button(mods, text="Повернуть 90°↻", command=self.rotate_90_cw, state="disabled")
+        self.rot90cw_btn.pack(fill=tk.X, pady=(0, 6))
+        self.rot90ccw_btn = tk.Button(mods, text="Повернуть 90°↺", command=self.rotate_90_ccw, state="disabled")
+        self.rot90ccw_btn.pack(fill=tk.X, pady=(0, 6))
+        self.rot_custom_btn = tk.Button(mods, text="Повернуть…", command=self.rotate_custom, state="disabled")
+        self.rot_custom_btn.pack(fill=tk.X, pady=(0, 6))
+        self.flip_h_btn = tk.Button(mods, text="Отразить по горизонтали", command=self.flip_h, state="disabled")
+        self.flip_h_btn.pack(fill=tk.X, pady=(0, 6))
+        self.flip_v_btn = tk.Button(mods, text="Отразить по вертикали", command=self.flip_v, state="disabled")
+        self.flip_v_btn.pack(fill=tk.X)
 
         # --- Зум только над картинкой ---
         self.image_label.bind("<MouseWheel>", self._on_mousewheel)               # Windows/macOS
@@ -250,6 +285,12 @@ class ImageViewer(tk.Tk):
         self.undo_btn.config(state="normal" if (has_img and len(self._history) > 0) else "disabled")
         can_reset = has_img and (self._orig_image is not None) and (self._pil_image is not self._orig_image or len(self._history) > 0)
         self.reset_btn.config(state="normal" if can_reset else "disabled")
+        self.bw_btn.config(state="normal" if has_img else "disabled")
+        self.rot90cw_btn.config(state="normal" if has_img else "disabled")
+        self.rot90ccw_btn.config(state="normal" if has_img else "disabled")
+        self.rot_custom_btn.config(state="normal" if has_img else "disabled")
+        self.flip_h_btn.config(state="normal" if has_img else "disabled")
+        self.flip_v_btn.config(state="normal" if has_img else "disabled")
 
     # --- зум ---
     def _on_mousewheel(self, event):
@@ -446,14 +487,18 @@ class ImageViewer(tk.Tk):
         if self._adj_win and tk.Toplevel.winfo_exists(self._adj_win):
             self._adj_win.lift()
             return
+
         win = tk.Toplevel(self)
         win.title("Коррекция: яркость/насыщенность/контраст")
         win.resizable(False, False)
         self._adj_win = win
 
-        def make_scale(parent, text, row):
+        # «базовое» состояние для предпросмотра (что показывалось до открытия)
+        before = self._pil_image
+
+        def make_scale(parent, text, row, init=1.0):
             tk.Label(parent, text=text).grid(row=row, column=0, sticky="w", padx=6, pady=4)
-            var = tk.DoubleVar(value=1.0)
+            var = tk.DoubleVar(value=init)
             scale = tk.Scale(parent, from_=0.0, to=2.0, resolution=0.01, orient=tk.HORIZONTAL,
                              length=280, variable=var)
             scale.grid(row=row, column=1, padx=6, pady=4)
@@ -461,20 +506,183 @@ class ImageViewer(tk.Tk):
 
         frm = tk.Frame(win)
         frm.pack(padx=10, pady=10)
-        v_b = make_scale(frm, "Яркость", 0)
-        v_s = make_scale(frm, "Насыщенность", 1)
-        v_c = make_scale(frm, "Контраст", 2)
+        v_b = make_scale(frm, "Яркость", 0, 1.0)
+        v_s = make_scale(frm, "Насыщенность", 1, 1.0)
+        v_c = make_scale(frm, "Контраст", 2, 1.0)
+
+        preview_var = tk.BooleanVar(value=True)
+
+        def render_preview(*_):
+            if not tk.Toplevel.winfo_exists(win):
+                return
+            if preview_var.get():
+                # считаем от «before», НЕ накапливаем
+                out = ImageEnhance.Brightness(before).enhance(v_b.get())
+                out = ImageEnhance.Color(out).enhance(v_s.get())
+                out = ImageEnhance.Contrast(out).enhance(v_c.get())
+                self._pil_image = out
+            else:
+                self._pil_image = before
+            self._render_zoomed()
+            self._show_info()
+            self._draw_histogram()
+
+        # бинды на слайдеры — живой предпросмотр
+        for var in (v_b, v_s, v_c):
+            var.trace_add("write", render_preview)
 
         btns = tk.Frame(win)
-        btns.pack(fill=tk.X, padx=10, pady=(0,10))
+        btns.pack(fill=tk.X, padx=10, pady=(0, 10))
+        tk.Checkbutton(btns, text="Предпросмотр", variable=preview_var, command=render_preview) \
+            .pack(side=tk.LEFT)
+
         def on_apply():
+            # возвращаем исходное до предпросмотра и применяем как одну операцию
+            self._pil_image = before
             self.apply_bsc(v_b.get(), v_s.get(), v_c.get())
             win.destroy()
-        tk.Button(btns, text="Применить", command=on_apply).pack(side=tk.LEFT)
-        def on_reset():
-            v_b.set(1.0); v_s.set(1.0); v_c.set(1.0)
-        tk.Button(btns, text="Сбросить значения", command=on_reset).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="Отмена", command=win.destroy).pack(side=tk.RIGHT)
+
+        def on_reset_vals():
+            v_b.set(1.0);
+            v_s.set(1.0);
+            v_c.set(1.0)
+
+        def on_cancel():
+            # откат предпросмотра
+            self._pil_image = before
+            self._render_zoomed();
+            self._show_info();
+            self._draw_histogram()
+            win.destroy()
+
+        tk.Button(btns, text="Применить", command=on_apply).pack(side=tk.RIGHT)
+        tk.Button(btns, text="Сбросить значения", command=on_reset_vals).pack(side=tk.RIGHT, padx=6)
+        tk.Button(btns, text="Отмена", command=on_cancel).pack(side=tk.RIGHT, padx=6)
+
+        win.protocol("WM_DELETE_WINDOW", on_cancel)
+        render_preview()  # начальный предпросмотр
+
+    def open_bw_dialog(self):
+        if self._pil_image is None:
+            return
+        # разрешим открывать один такой диалог
+        if hasattr(self, "_bw_win") and self._bw_win and tk.Toplevel.winfo_exists(self._bw_win):
+            self._bw_win.lift()
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Коррекция Ч/Б: уровни и гамма")
+        win.resizable(False, False)
+        self._bw_win = win
+
+        # то, что было на экране до открытия диалога
+        before = self._pil_image
+        # базовая картинка для расчетов: приводим к L (если уже L — не трогаем)
+        base_L = before if before.mode == "L" else before.convert("L")
+
+        # элементы управления
+        frm = tk.Frame(win);
+        frm.pack(padx=10, pady=10)
+
+        def make_int_scale(label, row, frm, a, b, init):
+            tk.Label(frm, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
+            var = tk.IntVar(value=init)
+            sc = tk.Scale(frm, from_=a, to=b, resolution=1, orient=tk.HORIZONTAL, length=280, variable=var)
+            sc.grid(row=row, column=1, padx=6, pady=4)
+            return var
+
+        v_black = make_int_scale("Чёрная точка", 0, frm, 0, 255, 0)
+        v_white = make_int_scale("Белая точка", 1, frm, 0, 255, 255)
+        tk.Label(frm, text="Гамма").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        v_gamma = tk.DoubleVar(value=1.0)
+        sc_gamma = tk.Scale(frm, from_=0.10, to=5.00, resolution=0.01, orient=tk.HORIZONTAL, length=280,
+                            variable=v_gamma)
+        sc_gamma.grid(row=2, column=1, padx=6, pady=4)
+
+        preview_var = tk.BooleanVar(value=True)
+
+        def render_preview(*_):
+            if not tk.Toplevel.winfo_exists(win):
+                return
+            b = v_black.get();
+            w = v_white.get();
+            g = v_gamma.get()
+            lut = build_levels_lut(b, w, g)
+            if preview_var.get():
+                self._pil_image = base_L.point(lut)
+            else:
+                self._pil_image = before
+            self._render_zoomed();
+            self._show_info();
+            self._draw_histogram()
+
+        for var in (v_black, v_white, v_gamma):
+            var.trace_add("write", render_preview)
+
+        btns = tk.Frame(win);
+        btns.pack(fill=tk.X, padx=10, pady=(0, 10))
+        tk.Checkbutton(btns, text="Предпросмотр", variable=preview_var, command=render_preview) \
+            .pack(side=tk.LEFT)
+
+        def on_apply():
+            # возвращаем исходное «до предпросмотра» и применяем как одну операцию
+            self._pil_image = before
+            self.apply_bw_levels(v_black.get(), v_white.get(), v_gamma.get())
+            win.destroy()
+
+        def on_cancel():
+            self._pil_image = before
+            self._render_zoomed();
+            self._show_info();
+            self._draw_histogram()
+            win.destroy()
+
+        tk.Button(btns, text="Применить", command=on_apply).pack(side=tk.RIGHT)
+        tk.Button(btns, text="Отмена", command=on_cancel).pack(side=tk.RIGHT, padx=6)
+
+        win.protocol("WM_DELETE_WINDOW", on_cancel)
+        render_preview()  # стартовый предпросмотр
+
+    def apply_bw_levels(self, black, white, gamma):
+        # применяем к текущему изображению: конвертируем в L, затем LUT
+        lut = build_levels_lut(black, white, gamma)
+
+        def _do(im):
+            imL = im if im.mode == "L" else im.convert("L")
+            return imL.point(lut)
+
+        self._apply_and_push(_do)
+
+    def rotate_90_cw(self):
+        self._apply_and_push(lambda im: im.rotate(-90, expand=True))
+
+    def rotate_90_ccw(self):
+        self._apply_and_push(lambda im: im.rotate(90, expand=True))
+
+    def rotate_custom(self):
+        if self._pil_image is None:
+            return
+        angle = simpledialog.askfloat("Поворот", "Угол (в градусах, по часовой стрелке):",
+                                      minvalue=-360.0, maxvalue=360.0)
+        if angle is None:
+            return
+
+        def _do(im):
+            # fillcolor — прозрачно для изображений с альфой, иначе черный фон
+            try:
+                fill = (0, 0, 0, 0) if "A" in im.getbands() else (0 if im.mode == "L" else (0, 0, 0))
+                return im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=fill)
+            except TypeError:
+                # старые Pillow без fillcolor
+                return im.rotate(-angle, resample=Image.BICUBIC, expand=True)
+
+        self._apply_and_push(_do)
+
+    def flip_h(self):
+        self._apply_and_push(lambda im: im.transpose(Image.FLIP_LEFT_RIGHT))
+
+    def flip_v(self):
+        self._apply_and_push(lambda im: im.transpose(Image.FLIP_TOP_BOTTOM))
 
     # --- построение гистограммы (matplotlib) ---
     def _get_variant_image(self):
