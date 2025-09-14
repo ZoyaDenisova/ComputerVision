@@ -4,98 +4,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ExifTags, ImageEnhance
 from tkinter import simpledialog
+from imgviewer.services import transforms as Sx, metadata as Smeta, histogram as Shist, io as Sio
+from imgviewer.services.history import History  # стек undo/redo
 
 # matplotlib для гистограмм в Tk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-# --- вспомогательные таблицы и функции ---
-BITS_PER_PIXEL = {
-    "1": 1, "L": 8, "P": 8,
-    "LA": 16, "RGB": 24, "RGBA": 32, "RGBa": 32,
-    "CMYK": 32, "YCbCr": 24,
-    "I;16": 16, "I": 32, "F": 32
-}
-
-MODE_HUMAN = {
-    "1": "Бинарное (1 бит)",
-    "L": "Оттенки серого (8 бит)",
-    "P": "Индексированное (палитра)",
-    "LA": "Серое + альфа",
-    "RGB": "Цветное (RGB)",
-    "RGBA": "Цветное (RGB + альфа)",
-    "RGBa": "Цветное (RGB + премультипл. альфа)",
-    "CMYK": "Печать (CMYK)",
-    "YCbCr": "Видео (YCbCr)",
-    "I;16": "16-бит целочисленное",
-    "I": "32-бит целочисленное",
-    "F": "32-бит float"
-}
-
-def human_size(n):
-    units = ["Б", "КБ", "МБ", "ГБ", "ТБ"]
-    i = 0
-    f = float(n)
-    while f >= 1024 and i < len(units) - 1:
-        f /= 1024
-        i += 1
-    return f"{f:.2f} {units[i]}"
-
-def exif_dict(img):
-    try:
-        exif = img.getexif()
-        if not exif:
-            return {}
-        return {ExifTags.TAGS.get(k, str(k)): v for k, v in exif.items()}
-    except Exception:
-        return {}
-
-def pick_exif_fields(ed):
-    keys = [
-        "DateTimeOriginal", "DateTime", "CreateDate",
-        "Make", "Model", "LensModel",
-        "ExposureTime", "FNumber", "ISOSpeedRatings", "PhotographicSensitivity",
-        "FocalLength", "Orientation", "Software",
-    ]
-    out = []
-    for k in keys:
-        if k in ed:
-            v = ed[k]
-            if isinstance(v, bytes):
-                try:
-                    v = v.decode(errors="ignore")
-                except Exception:
-                    v = str(v)
-            out.append(f"{k}: {v}")
-    if len(out) < 5 and ed:
-        for k, v in ed.items():
-            if k in ("GPSInfo",) or any(s.startswith(f"{k}:") for s in out):
-                continue
-            out.append(f"{k}: {v}")
-            if len(out) >= 5:
-                break
-    return out
-
-# LUT для линейной (черная/белая точки) и нелинейной (гамма) коррекции Ч/Б
-def build_levels_lut(black: int, white: int, gamma: float):
-    black = max(0, min(255, int(black)))
-    white = max(0, min(255, int(white)))
-    if white <= black:
-        white = black + 1  # защита от деления на ноль
-    gamma = max(0.01, float(gamma))
-    scale = 255.0 / (white - black)
-    inv_gamma = 1.0 / gamma
-    lut = []
-    for x in range(256):
-        if x <= black:
-            y = 0.0
-        elif x >= white:
-            y = 255.0
-        else:
-            y = ((x - black) * scale)  # [0..255] линейная нормировка
-            y = (y / 255.0) ** inv_gamma * 255.0  # гамма
-        lut.append(int(round(max(0.0, min(255.0, y)))))
-    return lut
 
 # --- приложение ---
 class ImageViewer(tk.Tk):
@@ -323,17 +238,9 @@ class ImageViewer(tk.Tk):
         if not path:
             return
         try:
-            img = Image.open(path)
-
-            # сохранить исходные метаданные
-            exif_bytes = img.info.get("exif")
-            if not exif_bytes:
-                try:
-                    exif_bytes = img.getexif().tobytes()
-                except Exception:
-                    exif_bytes = None
+            img, exif_bytes, icc_profile = Sio.open_image(path)
             self._orig_exif_bytes = exif_bytes
-            self._orig_icc_profile = img.info.get("icc_profile")
+            self._orig_icc_profile = icc_profile
 
             self._orig_image = img.copy()
             self._pil_image = img
@@ -413,15 +320,10 @@ class ImageViewer(tk.Tk):
             messagebox.showerror("Ошибка", f"Не удалось применить преобразование:\n{e}")
 
     def to_grayscale(self):
-        self._apply_and_push(lambda im: im.convert("L"))
+        self._apply_and_push(lambda im: Sx.to_grayscale(im))
 
     def apply_bsc(self, bright, sat, contr):
-        def _do(im):
-            out = ImageEnhance.Brightness(im).enhance(bright)
-            out = ImageEnhance.Color(out).enhance(sat)
-            out = ImageEnhance.Contrast(out).enhance(contr)
-            return out
-        self._apply_and_push(_do)
+        self._apply_and_push(lambda im: Sx.adjust_bsc(im, bright, sat, contr))
 
     def undo_last(self):
         if not self._history:
@@ -465,55 +367,16 @@ class ImageViewer(tk.Tk):
 
     # --- сводка о текущем изображении ---
     def _show_info(self):
-        img = self._pil_image
-        path = self._path
-        file_size = os.path.getsize(path) if path and os.path.exists(path) else 0
-        w, h = img.size
-        fmt = img.format or os.path.splitext(path)[1].upper().lstrip(".")
-        mode = img.mode
-        bpp = BITS_PER_PIXEL.get(mode)
-        bands = ",".join(img.getbands())
-
-        dpi = None
-        if isinstance(img.info.get("dpi"), (tuple, list)) and img.info.get("dpi"):
-            dpi = img.info.get("dpi")
-        elif "resolution" in img.info:
-            dpi = img.info.get("resolution")
-
-        n_frames = getattr(img, "n_frames", 1)
-        has_alpha = "A" in bands
-        icc_len = len(img.info["icc_profile"]) if img.info.get("icc_profile") else 0
-        approx_mem = int(w * h * bpp // 8) if bpp else None
-
-        ed = exif_dict(img)
-        exif_lines = pick_exif_fields(ed)
-        if not exif_lines:
-            exif_lines = ["не обнаружен"]
-
-        lines = []
-        lines.append(f"Путь: {path}")
-        lines.append(f"Размер на диске: {human_size(file_size)} ({file_size} байт)")
-        lines.append(f"Разрешение (пиксели): {w} × {h}")
-        if dpi:
-            lines.append(f"DPI (если указано): {dpi}")
-        lines.append(f"Формат файла: {fmt}")
-        lines.append(f"Цветовая модель (mode): {mode} — {MODE_HUMAN.get(mode, 'неизвестная/редкая')}")
-        if bpp:
-            lines.append(f"Глубина цвета (общая): {bpp} бит/пикс")
-        lines.append(f"Каналы: {bands}")
-        if approx_mem is not None:
-            lines.append(f"Оценка памяти при разжатии: {human_size(approx_mem)}")
-        if n_frames > 1:
-            lines.append(f"Кадров (анимация/мультистраница): {n_frames}")
-        lines.append(f"Альфа-канал: {'да' if has_alpha else 'нет'}")
-        lines.append(f"ICC-профиль: {'есть (' + str(icc_len) + ' байт)' if icc_len else 'нет/не указан'}")
-        lines.append("")
-        lines.append("EXIF:")
-        lines.extend(f"  • {s}" for s in exif_lines)
-
+        if self._pil_image is None:
+            return
+        text = Smeta.describe(
+            self._pil_image,
+            path=self._path,
+            icc_profile=self._orig_icc_profile,
+        )
         self.info_text.configure(state="normal")
         self.info_text.delete("1.0", tk.END)
-        self.info_text.insert(tk.END, "\n".join(lines))
+        self.info_text.insert(tk.END, text)
         self.info_text.configure(state="disabled")
 
     # --- сохранение ---
@@ -534,19 +397,15 @@ class ImageViewer(tk.Tk):
         )
         if not path:
             return
+        # БЫЛО: куча логики с ext = os.path.splitext(path)[1].lower  и save_img.save(...)
+        # СТАЛО:
         try:
-            ext = os.path.splitext(path)[1].lower()
-            save_img = self._pil_image
-            if ext in (".jpg", ".jpeg") and save_img.mode not in ("L", "RGB"):
-                save_img = save_img.convert("RGB")
-
-            params = {}
-            if self._orig_exif_bytes and ext in (".jpg", ".jpeg", ".tif", ".tiff"):
-                params["exif"] = self._orig_exif_bytes
-            if self._orig_icc_profile:
-                params["icc_profile"] = self._orig_icc_profile
-
-            save_img.save(path, **params)
+            Sio.save_image(
+                path,
+                self._pil_image,
+                exif_bytes=self._orig_exif_bytes,
+                icc_profile=self._orig_icc_profile,
+            )
             self._path = path
             self._show_info()
             messagebox.showinfo("Готово", f"Файл сохранён:\n{path}")
@@ -589,11 +448,7 @@ class ImageViewer(tk.Tk):
             if not tk.Toplevel.winfo_exists(win):
                 return
             if preview_var.get():
-                # считаем от «before», НЕ накапливаем
-                out = ImageEnhance.Brightness(before).enhance(v_b.get())
-                out = ImageEnhance.Color(out).enhance(v_s.get())
-                out = ImageEnhance.Contrast(out).enhance(v_c.get())
-                self._pil_image = out
+                self._pil_image = Sx.adjust_bsc(before, v_b.get(), v_s.get(), v_c.get())
             else:
                 self._pil_image = before
             self._render_zoomed()
@@ -677,12 +532,9 @@ class ImageViewer(tk.Tk):
         def render_preview(*_):
             if not tk.Toplevel.winfo_exists(win):
                 return
-            b = v_black.get();
-            w = v_white.get();
-            g = v_gamma.get()
-            lut = build_levels_lut(b, w, g)
             if preview_var.get():
-                self._pil_image = base_L.point(lut)
+                # base_L уже L — но bw_levels нормально работает и с L, и с RGB
+                self._pil_image = Sx.bw_levels(base_L, v_black.get(), v_white.get(), v_gamma.get())
             else:
                 self._pil_image = before
             self._render_zoomed();
@@ -717,20 +569,13 @@ class ImageViewer(tk.Tk):
         render_preview()  # стартовый предпросмотр
 
     def apply_bw_levels(self, black, white, gamma):
-        # применяем к текущему изображению: конвертируем в L, затем LUT
-        lut = build_levels_lut(black, white, gamma)
-
-        def _do(im):
-            imL = im if im.mode == "L" else im.convert("L")
-            return imL.point(lut)
-
-        self._apply_and_push(_do)
+        self._apply_and_push(lambda im: Sx.bw_levels(im, black, white, gamma))
 
     def rotate_90_cw(self):
-        self._apply_and_push(lambda im: im.rotate(-90, expand=True))
+        self._apply_and_push(lambda im: Sx.rotate_90_cw(im))
 
     def rotate_90_ccw(self):
-        self._apply_and_push(lambda im: im.rotate(90, expand=True))
+        self._apply_and_push(lambda im: Sx.rotate_90_ccw(im))
 
     def rotate_custom(self):
         if self._pil_image is None:
@@ -739,23 +584,13 @@ class ImageViewer(tk.Tk):
                                       minvalue=-360.0, maxvalue=360.0)
         if angle is None:
             return
-
-        def _do(im):
-            # fillcolor — прозрачно для изображений с альфой, иначе черный фон
-            try:
-                fill = (0, 0, 0, 0) if "A" in im.getbands() else (0 if im.mode == "L" else (0, 0, 0))
-                return im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=fill)
-            except TypeError:
-                # старые Pillow без fillcolor
-                return im.rotate(-angle, resample=Image.BICUBIC, expand=True)
-
-        self._apply_and_push(_do)
+        self._apply_and_push(lambda im: Sx.rotate(im, angle))
 
     def flip_h(self):
-        self._apply_and_push(lambda im: im.transpose(Image.FLIP_LEFT_RIGHT))
+        self._apply_and_push(lambda im: Sx.flip_h(im))
 
     def flip_v(self):
-        self._apply_and_push(lambda im: im.transpose(Image.FLIP_TOP_BOTTOM))
+        self._apply_and_push(lambda im: Sx.flip_v(im))
 
     # --- построение гистограммы (matplotlib) ---
     def _get_variant_image(self):
@@ -768,7 +603,6 @@ class ImageViewer(tk.Tk):
 
     def _draw_histogram(self):
         if self._pil_image is None:
-            # очистить ось, если нечего рисовать
             self._hist_ax.clear()
             self._hist_canvas.draw_idle()
             return
@@ -776,44 +610,35 @@ class ImageViewer(tk.Tk):
         img = self._get_variant_image()
         self._hist_ax.clear()
 
-        # режим и гистограммы
-        if img.mode == "L":
-            hist = img.histogram()[:256]
-            xs = list(range(256))
+        data = Shist.histogram_data(img)
+        xs = list(range(256))
+
+        if data["mode"] == "L":
+            hist = data["L"]
             self._hist_ax.plot(xs, hist, color="gray", linewidth=1, label="L")
             ymax = max(hist) or 1
-            # выключаем чекбоксы RGB визуально (но не ломаем логику)
-            # (просто игнорируем их состояние для L)
-            legend = True
             mode_text = "L"
         else:
-            rgb = img.convert("RGB")
-            r_hist = rgb.getchannel("R").histogram()[:256]
-            g_hist = rgb.getchannel("G").histogram()[:256]
-            b_hist = rgb.getchannel("B").histogram()[:256]
-            xs = list(range(256))
-
-            show_r = self._ch_r.get()
-            show_g = self._ch_g.get()
-            show_b = self._ch_b.get()
+            r, g, b = data["R"], data["G"], data["B"]
+            show_r, show_g, show_b = self._ch_r.get(), self._ch_g.get(), self._ch_b.get()
             if not (show_r or show_g or show_b):
-                # если всё снято — включим все, чтобы не было пусто
-                self._ch_r.set(True); self._ch_g.set(True); self._ch_b.set(True)
+                self._ch_r.set(True);
+                self._ch_g.set(True);
+                self._ch_b.set(True)
                 show_r = show_g = show_b = True
 
             vals = []
-            if show_r: vals += r_hist
-            if show_g: vals += g_hist
-            if show_b: vals += b_hist
+            if show_r: vals += r
+            if show_g: vals += g
+            if show_b: vals += b
             ymax = max(vals) if vals else 1
 
-            if show_r: self._hist_ax.plot(xs, r_hist, color="red", linewidth=1, label="R")
-            if show_g: self._hist_ax.plot(xs, g_hist, color="green", linewidth=1, label="G")
-            if show_b: self._hist_ax.plot(xs, b_hist, color="blue", linewidth=1, label="B")
-            legend = True
+            if show_r: self._hist_ax.plot(xs, r, color="red", linewidth=1, label="R")
+            if show_g: self._hist_ax.plot(xs, g, color="green", linewidth=1, label="G")
+            if show_b: self._hist_ax.plot(xs, b, color="blue", linewidth=1, label="B")
             mode_text = "RGB"
 
-        # оформление осей
+        # оформление
         self._hist_ax.set_xlim(0, 255)
         self._hist_ax.set_ylim(0, ymax * 1.05)
         self._hist_ax.set_xlabel("Уровень яркости (0–255)")
@@ -821,13 +646,13 @@ class ImageViewer(tk.Tk):
         var_map = {"original": "Оригинал", "current": "Текущая", "previous": "Предыдущая"}
         title = var_map.get(self._hist_variant.get(), "Текущая")
         self._hist_ax.set_title(f"{title} — {mode_text}")
-        if legend:
-            self._hist_ax.legend(loc="upper right", fontsize=8)
+        self._hist_ax.legend(loc="upper right", fontsize=8)
         self._hist_ax.grid(False)
         for spine in ("top", "right"):
             self._hist_ax.spines[spine].set_visible(False)
 
         self._hist_canvas.draw_idle()
+
 
 # --- запуск ---
 if __name__ == "__main__":
