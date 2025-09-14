@@ -77,10 +77,21 @@ class ImageViewer(tk.Tk):
         super().__init__()
         self.title("MVP: Просмотр + сведения")
         self.geometry("1100x700")
-        self._pil_image = None
+
+        # состояния
+        self._pil_image = None          # текущее изображение
+        self._orig_image = None         # исходник (для предпросмотра и сброса)
         self._tk_image = None
         self._path = None
+        self._history = []              # стек для Undo
+        self._previewing = False
+        self._saved_for_preview = None
 
+        # служебные данные исходника для сохранения
+        self._orig_exif_bytes = None
+        self._orig_icc_profile = None
+
+        # зум
         self._zoom = 1.0
         self._min_zoom = 0.1
         self._max_zoom = 8.0
@@ -95,15 +106,15 @@ class ImageViewer(tk.Tk):
         self._paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
         self._paned.pack(expand=True, fill=tk.BOTH)
 
-        # Левая панель (картинка)
-        self.left = tk.Frame(self._paned, width=800, height=600)  # шире по умолчанию
-        self._paned.add(self.left, minsize=480)  # не давать слишком сжимать
+        # Левая панель (картинка) — шире по умолчанию
+        self.left = tk.Frame(self._paned, width=800, height=600)
+        self._paned.add(self.left, minsize=480)
         self.image_label = tk.Label(self.left, bg="#111")
         self.image_label.pack(expand=True, fill=tk.BOTH)
 
         # Правая панель (сведения + управление)
         right = tk.Frame(self._paned)
-        self._paned.add(right, minsize=300)
+        self._paned.add(right, minsize=320)
 
         # Сведения (со скроллом)
         self.info_text = tk.Text(right, wrap="word", height=10, state="disabled")
@@ -115,13 +126,29 @@ class ImageViewer(tk.Tk):
         # Панель управления внизу справа
         controls = tk.Frame(right)
         controls.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=6)
-        self.gray_btn = tk.Button(controls, text="В градации серого", command=self.to_grayscale, state="disabled")
-        self.gray_btn.pack(side=tk.LEFT)
 
-        # --- ВАЖНО: зум привязан ТОЛЬКО к области картинки ---
-        self.image_label.bind("<MouseWheel>", self._on_mousewheel)          # Windows/macOS
-        self.image_label.bind("<Button-4>", lambda e: self._apply_zoom_step(+1))  # Linux
-        self.image_label.bind("<Button-5>", lambda e: self._apply_zoom_step(-1))  # Linux
+        self.gray_btn = tk.Button(controls, text="В градации серого", command=self.to_grayscale, state="disabled")
+        self.gray_btn.pack(side=tk.LEFT, padx=(0,6))
+
+        self.undo_btn = tk.Button(controls, text="Отменить", command=self.undo_last, state="disabled")
+        self.undo_btn.pack(side=tk.LEFT, padx=(0,6))
+
+        self.orig_btn = tk.Button(controls, text="Показать оригинал", state="disabled")
+        self.orig_btn.pack(side=tk.LEFT, padx=(0,6))
+        # удержание: показываем исходник пока кнопка зажата
+        self.orig_btn.bind("<ButtonPress-1>", self._preview_orig_press)
+        self.orig_btn.bind("<ButtonRelease-1>", self._preview_orig_release)
+
+        self.reset_btn = tk.Button(controls, text="Сбросить всё", command=self.reset_all, state="disabled")
+        self.reset_btn.pack(side=tk.LEFT, padx=(0,6))
+
+        self.save_btn = tk.Button(controls, text="Сохранить как…", command=self.save_as, state="disabled")
+        self.save_btn.pack(side=tk.LEFT, padx=(0,6))
+
+        # --- зум привязан ТОЛЬКО к области картинки ---
+        self.image_label.bind("<MouseWheel>", self._on_mousewheel)               # Windows/macOS
+        self.image_label.bind("<Button-4>", lambda e: self._apply_zoom_step(+1)) # Linux
+        self.image_label.bind("<Button-5>", lambda e: self._apply_zoom_step(-1)) # Linux
         self.image_label.bind("<Double-Button-1>", lambda e: self._reset_zoom())
 
         # Изначально «толстая» левая панель: ставим разделитель на ~70% ширины
@@ -148,14 +175,41 @@ class ImageViewer(tk.Tk):
         if not path:
             return
         try:
-            self._pil_image = Image.open(path)
+            img = Image.open(path)
+
+            # сохранить служебные данные исходника для последующего "Сохранить как…"
+            exif_bytes = img.info.get("exif")
+            if not exif_bytes:
+                try:
+                    exif_bytes = img.getexif().tobytes()
+                except Exception:
+                    exif_bytes = None
+            self._orig_exif_bytes = exif_bytes
+            self._orig_icc_profile = img.info.get("icc_profile")
+
+            # зафиксировать состояния
+            self._orig_image = img.copy()
+            self._pil_image = img
             self._path = path
+            self._history.clear()
             self._zoom = 1.0
+
             self._render_zoomed()
             self._show_info()
-            self.gray_btn.config(state="normal")
+            self._update_buttons()
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+
+    # --- служебное обновление кнопок ---
+    def _update_buttons(self):
+        has_img = self._pil_image is not None
+        self.gray_btn.config(state="normal" if has_img else "disabled")
+        self.save_btn.config(state="normal" if has_img else "disabled")
+        self.orig_btn.config(state="normal" if has_img else "disabled")
+        self.undo_btn.config(state="normal" if (has_img and len(self._history) > 0) else "disabled")
+        # сброс возможен, если уже были модификации
+        can_reset = has_img and (self._orig_image is not None) and (self._pil_image is not self._orig_image or len(self._history) > 0)
+        self.reset_btn.config(state="normal" if can_reset else "disabled")
 
     # --- зум (только над картинкой) ---
     def _on_mousewheel(self, event):
@@ -186,16 +240,62 @@ class ImageViewer(tk.Tk):
         self.image_label.config(image=self._tk_image)
         self.title(f"MVP: Просмотр + сведения — {self._zoom:.2f}x")
 
-    # --- кнопки преобразований ---
-    def to_grayscale(self):
+    # --- операции ---
+    def _apply_and_push(self, transform_fn):
+        """Применить transform_fn(im)->new_im, положить текущее в стек, показать результат."""
         if self._pil_image is None:
             return
         try:
-            self._pil_image = self._pil_image.convert("L")
+            prev = self._pil_image
+            new_im = transform_fn(prev)
+            if new_im is None:
+                return
+            self._history.append(prev)
+            self._pil_image = new_im
             self._render_zoomed()
             self._show_info()
+            self._update_buttons()
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось преобразовать в оттенки серого:\n{e}")
+            messagebox.showerror("Ошибка", f"Не удалось применить преобразование:\n{e}")
+
+    def to_grayscale(self):
+        self._apply_and_push(lambda im: im.convert("L"))
+
+    def undo_last(self):
+        if not self._history:
+            return
+        self._pil_image = self._history.pop()
+        self._render_zoomed()
+        self._show_info()
+        self._update_buttons()
+
+    def reset_all(self):
+        if self._orig_image is None:
+            return
+        self._history.clear()
+        self._pil_image = self._orig_image
+        self._render_zoomed()
+        self._show_info()
+        self._update_buttons()
+
+    # --- предпросмотр исходника при удержании кнопки ---
+    def _preview_orig_press(self, _event=None):
+        if self._orig_image is None or self._pil_image is None or self._previewing:
+            return
+        self._previewing = True
+        self._saved_for_preview = self._pil_image
+        self._pil_image = self._orig_image
+        self._render_zoomed()
+        self._show_info()
+
+    def _preview_orig_release(self, _event=None):
+        if not self._previewing:
+            return
+        self._pil_image = self._saved_for_preview
+        self._saved_for_preview = None
+        self._previewing = False
+        self._render_zoomed()
+        self._show_info()
 
     # --- сводка о текущем изображении ---
     def _show_info(self):
@@ -221,7 +321,7 @@ class ImageViewer(tk.Tk):
         icc_len = len(img.info["icc_profile"]) if img.info.get("icc_profile") else 0
         approx_mem = int(w * h * bpp // 8) if bpp else None
 
-        # EXIF (у временных преобразований может отсутствовать — это ок)
+        # EXIF (после преобразований может отсутствовать — это нормально)
         ed = exif_dict(img)
         exif_lines = pick_exif_fields(ed)
         if not exif_lines:
@@ -252,6 +352,48 @@ class ImageViewer(tk.Tk):
         self.info_text.delete("1.0", tk.END)
         self.info_text.insert(tk.END, "\n".join(lines))
         self.info_text.configure(state="disabled")
+
+    # --- сохранение ---
+    def save_as(self):
+        if self._pil_image is None:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Сохранить как…",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("BMP", "*.bmp"),
+                ("TIFF", "*.tif *.tiff"),
+                ("WEBP", "*.webp"),
+                ("Все файлы", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            ext = os.path.splitext(path)[1].lower()
+            save_img = self._pil_image
+
+            # JPEG не поддерживает альфу — конвертируем в RGB при необходимости
+            if ext in (".jpg", ".jpeg") and save_img.mode not in ("L", "RGB"):
+                save_img = save_img.convert("RGB")
+
+            params = {}
+            # где это уместно — протащим EXIF и ICC с исходника
+            if self._orig_exif_bytes and ext in (".jpg", ".jpeg", ".tif", ".tiff"):
+                params["exif"] = self._orig_exif_bytes
+            if self._orig_icc_profile:
+                params["icc_profile"] = self._orig_icc_profile
+
+            save_img.save(path, **params)
+
+            # обновим путь и сведения, чтобы показывать реальный размер на диске
+            self._path = path
+            self._show_info()
+            messagebox.showinfo("Готово", f"Файл сохранён:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
 if __name__ == "__main__":
     app = ImageViewer()
