@@ -159,9 +159,17 @@ class ImageViewer(tk.Tk):
         right = tk.Frame(self._paned)
         self._paned.add(right, minsize=360)
 
-        # --- Гистограмма (контролы + canvas) ---
-        hist_ctrls = tk.Frame(right)
-        hist_ctrls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(8,4))
+        # === Правая часть теперь сама панель с вертикальным разделителем (инфо | кнопки) ===
+        self._right_paned = tk.PanedWindow(right, orient=tk.VERTICAL, sashrelief=tk.RAISED)
+        self._right_paned.pack(expand=True, fill=tk.BOTH)
+
+        # ---- Верхняя панель: гистограмма + инфо (как одна секция) ----
+        info_pane = tk.Frame(self._right_paned)
+        self._right_paned.add(info_pane, minsize=240)
+
+        # Гистограмма: контролы
+        hist_ctrls = tk.Frame(info_pane)
+        hist_ctrls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(8, 4))
 
         tk.Label(hist_ctrls, text="Гистограмма:").grid(row=0, column=0, sticky="w")
         self._hist_variant = tk.StringVar(value="current")
@@ -169,11 +177,11 @@ class ImageViewer(tk.Tk):
         rb_frame.grid(row=0, column=1, sticky="w")
         for val, txt in (("original", "Оригинал"), ("current", "Текущая"), ("previous", "Предыдущая")):
             tk.Radiobutton(rb_frame, text=txt, variable=self._hist_variant, value=val,
-                           command=self._draw_histogram).pack(side=tk.LEFT, padx=(0,8))
+                           command=self._draw_histogram).pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Label(hist_ctrls, text="Каналы:").grid(row=1, column=0, sticky="w", pady=(4,0))
-        ch_frame = tk.Frame(hist_ctrls)
-        ch_frame.grid(row=1, column=1, sticky="w", pady=(4,0))
+        tk.Label(hist_ctrls, text="Каналы:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ch_frame = tk.Frame(hist_ctrls);
+        ch_frame.grid(row=1, column=1, sticky="w", pady=(4, 0))
         self._ch_r = tk.BooleanVar(value=True)
         self._ch_g = tk.BooleanVar(value=True)
         self._ch_b = tk.BooleanVar(value=True)
@@ -181,14 +189,16 @@ class ImageViewer(tk.Tk):
             var.trace_add("write", lambda *_: self._draw_histogram())
             tk.Checkbutton(ch_frame, text=name, variable=var).pack(side=tk.LEFT)
 
-        # matplotlib Figure в Tk
+        # Гистограмма: matplotlib-канвас
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         self._hist_fig = Figure(figsize=(5.8, 2.6), dpi=100)
         self._hist_ax = self._hist_fig.add_subplot(111)
-        self._hist_canvas = FigureCanvasTkAgg(self._hist_fig, master=right)
-        self._hist_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.X, padx=8, pady=(4,8))
+        self._hist_canvas = FigureCanvasTkAgg(self._hist_fig, master=info_pane)
+        self._hist_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.X, padx=8, pady=(4, 8))
 
-        # --- Сведения (со скроллом) ---
-        info_wrap = tk.Frame(right)
+        # Инфо (как раньше)
+        info_wrap = tk.Frame(info_pane)
         info_wrap.pack(side=tk.TOP, expand=True, fill=tk.BOTH)
         self.info_text = tk.Text(info_wrap, wrap="word", height=10, state="disabled")
         scroll = tk.Scrollbar(info_wrap, command=self.info_text.yview)
@@ -196,26 +206,80 @@ class ImageViewer(tk.Tk):
         self.info_text.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # --- Модификаторы (столбик под инфо) ---
-        mods = tk.Frame(right)
-        mods.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
-        self.gray_btn = tk.Button(mods, text="В градации серого", command=self.to_grayscale, state="disabled")
-        self.gray_btn.pack(fill=tk.X, pady=(0,6))
-        self.adjust_btn = tk.Button(mods, text="Коррекция…", command=self.open_adjust_dialog, state="disabled")
-        self.adjust_btn.pack(fill=tk.X)
-        self.bw_btn = tk.Button(mods, text="Коррекция Ч/Б…", command=self.open_bw_dialog, state="disabled")
-        self.bw_btn.pack(fill=tk.X, pady=(6, 6))
+        # ---- Нижняя панель: Кнопки-модификаторы (прокручиваемая область) ----
+        mods_pane = tk.Frame(self._right_paned)
+        self._right_paned.add(mods_pane, minsize=140)
 
-        self.rot90cw_btn = tk.Button(mods, text="Повернуть 90°↻", command=self.rotate_90_cw, state="disabled")
-        self.rot90cw_btn.pack(fill=tk.X, pady=(0, 6))
-        self.rot90ccw_btn = tk.Button(mods, text="Повернуть 90°↺", command=self.rotate_90_ccw, state="disabled")
-        self.rot90ccw_btn.pack(fill=tk.X, pady=(0, 6))
-        self.rot_custom_btn = tk.Button(mods, text="Повернуть…", command=self.rotate_custom, state="disabled")
-        self.rot_custom_btn.pack(fill=tk.X, pady=(0, 6))
-        self.flip_h_btn = tk.Button(mods, text="Отразить по горизонтали", command=self.flip_h, state="disabled")
-        self.flip_h_btn.pack(fill=tk.X, pady=(0, 6))
-        self.flip_v_btn = tk.Button(mods, text="Отразить по вертикали", command=self.flip_v, state="disabled")
-        self.flip_v_btn.pack(fill=tk.X)
+        # Canvas + Scrollbar (без bind_all; колесо привяжем по bindtags)
+        self._mods_canvas = tk.Canvas(mods_pane, borderwidth=0, highlightthickness=1)
+        mods_scroll = tk.Scrollbar(mods_pane, orient="vertical", command=self._mods_canvas.yview)
+        self._mods_canvas.configure(yscrollcommand=mods_scroll.set)
+        self._mods_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        mods_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 8))
+
+        # Внутренний фрейм с кнопками
+        self._mods_inner = tk.Frame(self._mods_canvas)
+        self._mods_window = self._mods_canvas.create_window((0, 0), window=self._mods_inner, anchor="nw")
+
+        def _mods_configure(_evt=None):
+            # обновить область прокрутки и ширину внутреннего фрейма
+            self._mods_canvas.configure(scrollregion=self._mods_canvas.bbox("all"))
+            self._mods_canvas.itemconfigure(self._mods_window, width=self._mods_canvas.winfo_width())
+
+        self._mods_inner.bind("<Configure>", _mods_configure)
+        self._mods_canvas.bind("<Configure>",
+                               lambda e: self._mods_canvas.itemconfigure(self._mods_window, width=e.width))
+
+        # Правильная прокрутка: добавляем пользовательский bindtag всем детям области кнопок
+        MODS_TAG = "ModsScroll"
+        self.bind_class(MODS_TAG, "<MouseWheel>",
+                        lambda e: self._mods_canvas.yview_scroll(-int(e.delta / 120), "units"))
+        self.bind_class(MODS_TAG, "<Button-4>", lambda e: self._mods_canvas.yview_scroll(-1, "units"))  # Linux
+        self.bind_class(MODS_TAG, "<Button-5>", lambda e: self._mods_canvas.yview_scroll(1, "units"))  # Linux
+
+        def _tag_mods_descendants(widget):
+            # вставляем кастомный tag вторым (после индивидуального тега виджета)
+            tags = list(widget.bindtags())
+            if MODS_TAG not in tags:
+                tags.insert(1, MODS_TAG)
+                widget.bindtags(tuple(tags))
+            for ch in widget.winfo_children():
+                _tag_mods_descendants(ch)
+
+        # Кнопки (перенесены сюда) — размещаем внутри self._mods_inner
+        self.gray_btn = tk.Button(self._mods_inner, text="В градации серого", command=self.to_grayscale,
+                                  state="disabled")
+        self.gray_btn.pack(fill=tk.X, pady=(8, 6), padx=8)
+
+        self.adjust_btn = tk.Button(self._mods_inner, text="Коррекция…", command=self.open_adjust_dialog,
+                                    state="disabled")
+        self.adjust_btn.pack(fill=tk.X, pady=(0, 6), padx=8)
+
+        self.bw_btn = tk.Button(self._mods_inner, text="Коррекция Ч/Б…", command=self.open_bw_dialog, state="disabled")
+        self.bw_btn.pack(fill=tk.X, pady=(6, 6), padx=8)
+
+        self.rot90cw_btn = tk.Button(self._mods_inner, text="Повернуть 90°↻", command=self.rotate_90_cw,
+                                     state="disabled")
+        self.rot90cw_btn.pack(fill=tk.X, pady=(0, 6), padx=8)
+        self.rot90ccw_btn = tk.Button(self._mods_inner, text="Повернуть 90°↺", command=self.rotate_90_ccw,
+                                      state="disabled")
+        self.rot90ccw_btn.pack(fill=tk.X, pady=(0, 6), padx=8)
+        self.rot_custom_btn = tk.Button(self._mods_inner, text="Повернуть…", command=self.rotate_custom,
+                                        state="disabled")
+        self.rot_custom_btn.pack(fill=tk.X, pady=(0, 6), padx=8)
+        self.flip_h_btn = tk.Button(self._mods_inner, text="Отразить по горизонтали", command=self.flip_h,
+                                    state="disabled")
+        self.flip_h_btn.pack(fill=tk.X, pady=(0, 6), padx=8)
+        self.flip_v_btn = tk.Button(self._mods_inner, text="Отразить по вертикали", command=self.flip_v,
+                                    state="disabled")
+        self.flip_v_btn.pack(fill=tk.X, pady=(0, 8), padx=8)
+
+        # Проставляем bindtag всем кнопкам (и, на всякий случай, самому контейнеру)
+        _tag_mods_descendants(self._mods_inner)
+        _tag_mods_descendants(self._mods_canvas)
+
+        # Инициализация позиций «сашей»: левая панель уже есть; добавим и для правой вертикальной
+        self.after(60, self._init_right_vertical_sash)
 
         # --- Зум только над картинкой ---
         self.image_label.bind("<MouseWheel>", self._on_mousewheel)               # Windows/macOS
@@ -235,6 +299,15 @@ class ImageViewer(tk.Tk):
             w = self._paned.winfo_width()
             x = int(w * 0.70)
             self._paned.sash_place(0, x, 1)
+        except Exception:
+            pass
+
+    def _init_right_vertical_sash(self):
+        try:
+            self.update_idletasks()
+            h = self._right_paned.winfo_height()
+            y = int(h * 0.66)  # ~ верх (гистограмма+инфо) 2/3, низ (кнопки) 1/3
+            self._right_paned.sash_place(0, 1, y)
         except Exception:
             pass
 
