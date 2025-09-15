@@ -4,6 +4,7 @@ from typing import Callable, Optional
 from PIL import Image
 from imgviewer.model import Model
 from imgviewer.services import io as Sio, metadata as Smeta, transforms as Sx
+from imgviewer.services.history import History
 
 class Controller:
     def __init__(self, model: Model):
@@ -33,11 +34,11 @@ class Controller:
         )
 
     # ---- гистограмма ----
-    def hist_image(self, kind: str) -> Optional[Image.Image]:
+    def hist_image(self, kind: str):
         if kind == "original":
             return self.m.original
-        if kind == "previous" and self.m.history:
-            return self.m.history[-1]
+        if kind == "previous" and self.m.history and self.m.history.can_undo():
+            return self.m.history.peek_undo()
         return self.m.current
 
     # ---- базовые операции состояния ----
@@ -45,22 +46,37 @@ class Controller:
         return self.m.current is not None
 
     def can_undo(self) -> bool:
-        return bool(self.m.history)
+        return bool(self.m.history and self.m.history.can_undo())
 
-    def apply_transform(self, fn: Callable[[Image.Image], Image.Image]) -> bool:
+    def can_redo(self) -> bool:
+        return bool(self.m.history and self.m.history.can_redo())
+
+    def apply_transform(self, fn):
         if self.m.current is None:
             return False
         new_im = fn(self.m.current)
         if new_im is None:
             return False
-        self.m.history.append(self.m.current)
+        self.m.history.push(self.m.current)   # теперь это вызовет History.push()
         self.m.current = new_im
         return True
 
     def undo(self) -> bool:
-        if not self.m.history:
+        if self.m.current is None or not self.m.history:
             return False
-        self.m.current = self.m.history.pop()
+        prev = self.m.history.undo(self.m.current)
+        if prev is None:
+            return False
+        self.m.current = prev
+        return True
+
+    def redo(self) -> bool:
+        if self.m.current is None or not self.m.history:
+            return False
+        nxt = self.m.history.redo(self.m.current)
+        if nxt is None:
+            return False
+        self.m.current = nxt
         return True
 
     def reset(self) -> bool:

@@ -1,8 +1,9 @@
 # imgviewer/model.py
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
 from PIL import Image
+from imgviewer.services.history import History  # <-- добавь это
 
 @dataclass
 class Model:
@@ -11,7 +12,7 @@ class Model:
     path: Optional[str] = None
     exif_bytes: Optional[bytes] = None
     icc_profile: Optional[bytes] = None
-    history: List[Image.Image] = field(default_factory=list)
+    history: History = field(default_factory=lambda: History(maxlen=100))  # <-- вот так
 
     # для «показать оригинал (удерж.)»
     preview_saved: Optional[Image.Image] = None

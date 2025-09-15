@@ -41,6 +41,8 @@ class ImageViewer(tk.Tk):
 
         self.undo_btn = tk.Button(self.image_controls, text="Отменить", command=self.undo_last, state="disabled")
         self.undo_btn.pack(side=tk.LEFT, padx=(0,6))
+        self.redo_btn = tk.Button(self.image_controls, text="Повторить", command=self.redo_last, state="disabled")
+        self.redo_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.orig_btn = tk.Button(self.image_controls, text="Оригинал (удерж.)", state="disabled")
         self.orig_btn.pack(side=tk.LEFT, padx=(0,6))
         self.orig_btn.bind("<ButtonPress-1>", self._preview_orig_press)
@@ -147,6 +149,7 @@ class ImageViewer(tk.Tk):
         self.save_btn.config(state="normal" if has_img else "disabled")
         self.orig_btn.config(state="normal" if has_img else "disabled")
         self.undo_btn.config(state="normal" if (has_img and self.ctrl.can_undo()) else "disabled")
+        self.redo_btn.config(state="normal" if (has_img and self.ctrl.can_redo()) else "disabled")
         can_reset = has_img and (
                 self.model.original is not None and
                 (self.model.current is not self.model.original or self.ctrl.can_undo())
@@ -188,6 +191,10 @@ class ImageViewer(tk.Tk):
 
     def undo_last(self):
         if self.ctrl.undo():
+            self._refresh_all()
+
+    def redo_last(self):
+        if self.ctrl.redo():
             self._refresh_all()
 
     def reset_all(self):

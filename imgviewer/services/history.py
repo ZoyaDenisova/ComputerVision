@@ -39,3 +39,7 @@ class History:
         nxt = self._redo.pop()
         self._undo.append(current)
         return nxt
+
+# + в конец класса History
+def peek_undo(self):
+    return self._undo[-1] if self._undo else None
