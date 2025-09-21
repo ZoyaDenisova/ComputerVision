@@ -1,20 +1,53 @@
-# imgviewer/services/histogram.py
 from __future__ import annotations
-from typing import Dict, List, Literal, Optional
+
+from typing import List, Optional, TypedDict, Literal
 from PIL import Image
 
-def histogram_data(img: Image.Image) -> Dict[str, object]:
-    """Подготовить данные гистограммы.
-    Возвращает:
-      {"mode": "L"|"RGB", "L": list|None, "R": list|None, "G": list|None, "B": list|None}
-    """
+class HistogramData(TypedDict):
+    mode: Literal["L", "RGB"]
+    L: Optional[List[int]]
+    R: Optional[List[int]]
+    G: Optional[List[int]]
+    B: Optional[List[int]]
+
+__all__ = ["HistogramData", "histogram_data"]
+
+def _hist256(h: List[int]) -> List[int]:
+    n = len(h)
+    if n == 256:
+        return h
+    if n < 256:
+        return h + [0] * (256 - n)
+
+    bins = [0] * 256
+    ratio = n / 256.0
+    for i, count in enumerate(h):
+        j = int(i / ratio)
+        if j >= 256:
+            j = 255
+        bins[j] += count
+    return bins
+
+
+def histogram_data(img: Image.Image) -> HistogramData:
     if img.mode == "L":
-        return {"mode": "L", "L": img.histogram()[:256], "R": None, "G": None, "B": None}
+        return {
+            "mode": "L",
+            "L": _hist256(img.histogram()),
+            "R": None,
+            "G": None,
+            "B": None,
+        }
+
     rgb = img.convert("RGB")
+    r = _hist256(rgb.getchannel("R").histogram())
+    g = _hist256(rgb.getchannel("G").histogram())
+    b = _hist256(rgb.getchannel("B").histogram())
+
     return {
         "mode": "RGB",
         "L": None,
-        "R": rgb.getchannel("R").histogram()[:256],
-        "G": rgb.getchannel("G").histogram()[:256],
-        "B": rgb.getchannel("B").histogram()[:256],
+        "R": r,
+        "G": g,
+        "B": b,
     }

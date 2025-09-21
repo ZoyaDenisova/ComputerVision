@@ -1,9 +1,8 @@
-# imgviewer/ui/tools_panel.py
 from __future__ import annotations
 import tkinter as tk
 
 class ToolsPanel(tk.Frame):
-    """Прокручиваемая колонка кнопок; принимает callbacks и умеет включаться/выключаться пачкой."""
+    """Панель инструментов"""
     def __init__(self, master):
         super().__init__(master)
 
@@ -25,11 +24,9 @@ class ToolsPanel(tk.Frame):
         self._inner.bind("<Configure>", _cfg)
         self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfigure(self._win, width=e.width))
 
-        # прокрутка колесиком через bindtags (без bind_all)
+        # прокрутка колесиком
         MODS_TAG = "ModsScroll"
         self.bind_class(MODS_TAG, "<MouseWheel>", lambda e: self._canvas.yview_scroll(-int(e.delta/120), "units"))
-        self.bind_class(MODS_TAG, "<Button-4>", lambda e: self._canvas.yview_scroll(-1, "units"))
-        self.bind_class(MODS_TAG, "<Button-5>", lambda e: self._canvas.yview_scroll(1, "units"))
         self._apply_tag(self._inner, MODS_TAG)
         self._apply_tag(self._canvas, MODS_TAG)
 
@@ -61,7 +58,7 @@ class ToolsPanel(tk.Frame):
 
     # публичные API
     def set_callbacks(self, mapping: dict[str, callable]):
-        """Привязать обработчики к кнопкам по ключам: grayscale|adjust|bw|rot90cw|rot90ccw|rot_custom|flip_h|flip_v"""
+        """Привязать обработчики к кнопкам по ключам"""
         for k, cb in mapping.items():
             if k in self.btns:
                 self.btns[k].config(command=cb)

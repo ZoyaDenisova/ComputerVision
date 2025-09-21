@@ -1,4 +1,3 @@
-# imgviewer/ui/histogram_panel.py
 from __future__ import annotations
 import tkinter as tk
 from matplotlib.figure import Figure
@@ -10,12 +9,11 @@ class HistogramPanel(tk.Frame):
     def __init__(self, master):
         super().__init__(master)
 
-        # верхние контролы
         ctrl = tk.Frame(self); ctrl.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(8,4))
         tk.Label(ctrl, text="Гистограмма:").grid(row=0, column=0, sticky="w")
         self._variant = tk.StringVar(value="current")
         rb = tk.Frame(ctrl); rb.grid(row=0, column=1, sticky="w")
-        for val, txt in (("original","Оригинал"), ("current","Текущая"), ("previous","Предыдущая")):
+        for val, txt in (("original","Оригинал"), ("current","Текущая")):
             tk.Radiobutton(rb, text=txt, variable=self._variant, value=val, command=self.redraw)\
               .pack(side=tk.LEFT, padx=(0,8))
 
@@ -28,17 +26,14 @@ class HistogramPanel(tk.Frame):
             var.trace_add("write", lambda *_: self.redraw())
             tk.Checkbutton(ch, text=name, variable=var).pack(side=tk.LEFT)
 
-        # фигура
         self._fig = Figure(figsize=(5.8, 2.6), dpi=100)
         self._ax = self._fig.add_subplot(111)
         self._canvas = FigureCanvasTkAgg(self._fig, master=self)
         self._canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.X, padx=8, pady=(4,8))
 
-        # провайдер картинок
-        self._provider = None  # callable(kind:str)->PIL.Image
+        self._provider = None
 
     def set_provider(self, provider):
-        """provider(kind:str) -> PIL.Image"""
         self._provider = provider
 
     def redraw(self):
@@ -62,7 +57,6 @@ class HistogramPanel(tk.Frame):
             r, g, b = data["R"], data["G"], data["B"]
             show_r, show_g, show_b = self._ch_r.get(), self._ch_g.get(), self._ch_b.get()
             if not (show_r or show_g or show_b):
-                # включим все, чтобы не оставаться пустыми
                 show_r = show_g = show_b = True
                 self._ch_r.set(True); self._ch_g.set(True); self._ch_b.set(True)
 
@@ -82,7 +76,7 @@ class HistogramPanel(tk.Frame):
         self._ax.set_ylim(0, ymax * 1.05)
         self._ax.set_xlabel("Уровень яркости (0–255)")
         self._ax.set_ylabel("Частота")
-        var_map = {"original": "Оригинал", "current": "Текущая", "previous": "Предыдущая"}
+        var_map = {"original": "Оригинал", "current": "Текущая"}
         title = var_map.get(kind, "Текущая")
         self._ax.set_title(f"{title} — {mode_text}")
         self._ax.legend(loc="upper right", fontsize=8)

@@ -1,4 +1,3 @@
-# imgviewer/ui/info_panel.py
 from __future__ import annotations
 import tkinter as tk
 

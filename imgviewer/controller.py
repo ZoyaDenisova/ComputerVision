@@ -1,16 +1,13 @@
-# imgviewer/controller.py
 from __future__ import annotations
-from typing import Callable, Optional
 from PIL import Image
 from imgviewer.model import Model
 from imgviewer.services import io as Sio, metadata as Smeta, transforms as Sx
-from imgviewer.services.history import History
 
 class Controller:
     def __init__(self, model: Model):
         self.m = model
 
-    # ---- файлы ----
+    # файлы
     def open_image(self, path: str) -> None:
         img, exif, icc = Sio.open_image(path)
         self.m.original = img.copy()
@@ -33,15 +30,13 @@ class Controller:
             self.m.current, path=self.m.path, icc_profile=self.m.icc_profile
         )
 
-    # ---- гистограмма ----
+    # гистограмма
     def hist_image(self, kind: str):
         if kind == "original":
             return self.m.original
-        if kind == "previous" and self.m.history and self.m.history.can_undo():
-            return self.m.history.peek_undo()
         return self.m.current
 
-    # ---- базовые операции состояния ----
+    # базовые операции состояния
     def has_image(self) -> bool:
         return self.m.current is not None
 
@@ -86,7 +81,7 @@ class Controller:
         self.m.current = self.m.original
         return True
 
-    # ---- предпросмотры ----
+    # предпросмотры
     def set_temp_image(self, img: Image.Image) -> None:
         """Установить временное изображение без записи в историю (для живого предпросмотра)."""
         self.m.current = img
@@ -107,7 +102,7 @@ class Controller:
         self.m.preview_active = False
         return True
 
-    # ---- обёртки над трансформациями ----
+    # обёртки над трансформациями
     def to_grayscale(self) -> bool:
         return self.apply_transform(lambda im: Sx.to_grayscale(im))
 

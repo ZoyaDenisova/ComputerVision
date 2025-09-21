@@ -1,13 +1,12 @@
-# imgviewer/services/transforms.py
 from __future__ import annotations
 from PIL import Image, ImageEnhance
 
 def to_grayscale(img: Image.Image) -> Image.Image:
-    """Вернуть копию изображения в градациях серого (mode 'L')."""
+    """Градации серого"""
     return img.convert("L")
 
 def adjust_bsc(img: Image.Image, brightness: float, saturation: float, contrast: float) -> Image.Image:
-    """Яркость/насыщенность/контраст (1.0 = без изменений)."""
+    """Яркость/насыщенность/контраст"""
     out = ImageEnhance.Brightness(img).enhance(brightness)
     out = ImageEnhance.Color(out).enhance(saturation)
     out = ImageEnhance.Contrast(out).enhance(contrast)
@@ -42,13 +41,11 @@ def bw_levels(img: Image.Image, black: int, white: int, gamma: float) -> Image.I
     return imgL.point(lut)
 
 def rotate(img: Image.Image, angle_deg: float) -> Image.Image:
-    """Поворот по часовой стрелке на произвольный угол, с expand=True."""
-    # Pillow считает угол против часовой, поэтому ставим минус
+    """Поворот по часовой стрелке на произвольный угол"""
     fill = (0, 0, 0, 0) if "A" in img.getbands() else (0 if img.mode == "L" else (0, 0, 0))
     try:
         return img.rotate(-angle_deg, resample=Image.BICUBIC, expand=True, fillcolor=fill)
     except TypeError:
-        # старые Pillow без fillcolor
         return img.rotate(-angle_deg, resample=Image.BICUBIC, expand=True)
 
 def rotate_90_cw(img: Image.Image) -> Image.Image:

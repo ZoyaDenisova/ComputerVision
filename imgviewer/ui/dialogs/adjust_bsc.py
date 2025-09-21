@@ -1,9 +1,8 @@
-# imgviewer/ui/dialogs/adjust_bsc.py
 import tkinter as tk
 from imgviewer.services import transforms as Sx  # для предпросмотра
 
 class AdjustBSCDialog(tk.Toplevel):
-    """Диалог Яркость/Насыщенность/Контраст с живым предпросмотром через колбэки."""
+    """Диалог Яркость/Насыщенность/Контраст с живым предпросмотром"""
     def __init__(self, master, before_image, on_preview, on_apply, on_cancel, init=(1.0, 1.0, 1.0)):
         super().__init__(master)
         self.title("Коррекция: яркость/насыщенность/контраст")
@@ -19,7 +18,7 @@ class AdjustBSCDialog(tk.Toplevel):
         def make_scale(text, row, value):
             tk.Label(frm, text=text).grid(row=row, column=0, sticky="w", padx=6, pady=4)
             var = tk.DoubleVar(value=value)
-            sc = tk.Scale(frm, from_=0.0, to=2.0, resolution=0.01, orient=tk.HORIZONTAL, length=280, variable=var)
+            sc = tk.Scale(frm, from_=0.0, to=2.0, resolution=0.01, orient="horizontal", length=280, variable=var)
             sc.grid(row=row, column=1, padx=6, pady=4)
             return var
 
@@ -29,19 +28,21 @@ class AdjustBSCDialog(tk.Toplevel):
 
         self.preview_var = tk.BooleanVar(value=True)
 
-        btns = tk.Frame(self); btns.pack(fill=tk.X, padx=10, pady=(0, 10))
+        btns = tk.Frame(self); btns.pack(fill="x", padx=10, pady=(0, 10))
         tk.Checkbutton(btns, text="Предпросмотр", variable=self.preview_var, command=self._render_preview) \
-            .pack(side=tk.LEFT)
+            .pack(side="left")
 
-        tk.Button(btns, text="Применить", command=self._apply).pack(side=tk.RIGHT)
-        tk.Button(btns, text="Сбросить значения", command=self._reset_vals).pack(side=tk.RIGHT, padx=6)
-        tk.Button(btns, text="Отмена", command=self._cancel).pack(side=tk.RIGHT, padx=6)
+        tk.Button(btns, text="Применить", command=self._apply).pack(side="right")
+        tk.Button(btns, text="Сбросить значения", command=self._reset_vals).pack(side="right", padx=6)
+        tk.Button(btns, text="Отмена", command=self._cancel).pack(side="right", padx=6)
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
 
-        # бинды для «живого» предпросмотра
+        # бинды для живого предпросмотра
+        def _on_var_change(_name: str, _index: str, _op: str) -> None:
+            self._render_preview()
         for var in (self.v_b, self.v_s, self.v_c):
-            var.trace_add("write", lambda *_: self._render_preview())
+            var.trace_add("write", _on_var_change)
 
         self.after(0, self._render_preview)
 

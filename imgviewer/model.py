@@ -1,4 +1,3 @@
-# imgviewer/model.py
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
@@ -14,6 +13,6 @@ class Model:
     icc_profile: Optional[bytes] = None
     history: History = field(default_factory=lambda: History(maxlen=100))  # <-- вот так
 
-    # для «показать оригинал (удерж.)»
+    # показать оригинал (удерж.)
     preview_saved: Optional[Image.Image] = None
     preview_active: bool = False

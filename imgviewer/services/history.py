@@ -1,10 +1,8 @@
-# imgviewer/services/history.py
 from __future__ import annotations
 from typing import Optional, List
 from PIL import Image
 
 class History:
-    """Простой стек undo/redo для Pillow-изображений (без копий, на ответственности вызывающего)."""
     def __init__(self, maxlen: int = 100):
         self._undo: List[Image.Image] = []
         self._redo: List[Image.Image] = []
@@ -40,6 +38,3 @@ class History:
         self._undo.append(current)
         return nxt
 
-# + в конец класса History
-def peek_undo(self):
-    return self._undo[-1] if self._undo else None

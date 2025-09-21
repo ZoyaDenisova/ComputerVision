@@ -1,10 +1,9 @@
-# imgviewer/ui/image_canvas.py
 from __future__ import annotations
 import tkinter as tk
 from PIL import Image, ImageTk
 
 class ImageCanvas(tk.Frame):
-    """Простой виджет отображения PIL.Image с поддержкой зума колесиком."""
+    """Виджет отображения изображения"""
     def __init__(self, master, *, bg="#111", min_zoom=0.1, max_zoom=8.0, step=1.1):
         super().__init__(master, bg=bg)
         self._label = tk.Label(self, bg=bg)
@@ -18,14 +17,13 @@ class ImageCanvas(tk.Frame):
         self.step = float(step)
         self.zoom = 1.0
 
-        self._on_zoom_cb = None  # callback(zoom: float)
+        self._on_zoom_cb = None
 
-        # зум — только над картинкой
-        self._label.bind("<MouseWheel>", self._on_mousewheel)               # Win/mac
-        self._label.bind("<Button-4>", lambda e: self._apply_zoom(+1))      # Linux
-        self._label.bind("<Button-5>", lambda e: self._apply_zoom(-1))      # Linux
+        # зум только над картинкой
+        self._label.bind("<MouseWheel>", self._on_mousewheel)
         self._label.bind("<Double-Button-1>", lambda e: self.reset_zoom())
 
+    # внешний код реагирует на изменение масштаба
     def set_on_zoom(self, cb):
         self._on_zoom_cb = cb
 
@@ -42,7 +40,6 @@ class ImageCanvas(tk.Frame):
     def reset_zoom(self):
         self.set_zoom(1.0)
 
-    # --- внутреннее ---
     def _on_mousewheel(self, event):
         self._apply_zoom(+1 if event.delta > 0 else -1)
 

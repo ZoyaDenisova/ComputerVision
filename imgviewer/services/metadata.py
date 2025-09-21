@@ -1,7 +1,6 @@
-# imgviewer/services/metadata.py
 from __future__ import annotations
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from PIL import Image, ExifTags
 
 BITS_PER_PIXEL: Dict[str, int] = {
@@ -58,13 +57,12 @@ def pick_exif_fields(ed: Dict[str, object]) -> List[str]:
     return out
 
 def describe(img: Image.Image, *, path: Optional[str], icc_profile: Optional[bytes]) -> str:
-    """Собрать человекочитаемую сводку по изображению (без Tk)."""
     file_size = os.path.getsize(path) if path and os.path.exists(path) else 0
     w, h = img.size
-    fmt = img.format or (os.path.splitext(path)[1].upper().lstrip(".") if path else "N/A")
-    mode = img.mode
-    bpp = BITS_PER_PIXEL.get(mode)
-    bands = ",".join(img.getbands())
+    fmt = img.format or (os.path.splitext(path)[1].upper().lstrip(".") if path else "N/A") # формат изображения
+    mode = img.mode                             # режим изображения
+    bpp = BITS_PER_PIXEL.get(mode)              # глубина цвета
+    bands = ",".join(img.getbands())            # список каналов
 
     dpi = None
     if isinstance(img.info.get("dpi"), (tuple, list)) and img.info.get("dpi"):

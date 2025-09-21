@@ -1,17 +1,14 @@
-# mvp_viewer.py
-import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from imgviewer.model import Model
 from imgviewer.controller import Controller
 from tkinter import simpledialog
-from imgviewer.services import transforms as Sx, metadata as Smeta, histogram as Shist, io as Sio
 from imgviewer.ui import ImageCanvas, HistogramPanel, InfoPanel, ToolsPanel
 from imgviewer.ui.dialogs.adjust_bsc import AdjustBSCDialog
 from imgviewer.ui.dialogs.bw_levels import BWLevelsDialog
 
 
-# --- приложение ---
+# приложение
 class ImageViewer(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -61,11 +58,10 @@ class ImageViewer(tk.Tk):
         right = tk.Frame(self._paned)
         self._paned.add(right, minsize=360)
 
-        # === Правая часть теперь сама панель с вертикальным разделителем (инфо | кнопки) ===
         self._right_paned = tk.PanedWindow(right, orient=tk.VERTICAL, sashrelief=tk.RAISED)
         self._right_paned.pack(expand=True, fill=tk.BOTH)
 
-        # ---- Верхняя панель: гистограмма + инфо ----
+        # Верхняя панель: гистограмма + инфо
         info_pane = tk.Frame(self._right_paned)
         self._right_paned.add(info_pane, minsize=240)
 
@@ -75,7 +71,7 @@ class ImageViewer(tk.Tk):
         self.info_panel = InfoPanel(info_pane)
         self.info_panel.pack(side=tk.TOP, expand=True, fill=tk.BOTH)
 
-        # ---- Нижняя панель: прокручиваемые модификаторы ----
+        # Нижняя панель: прокручиваемые модификаторы
         mods_pane = tk.Frame(self._right_paned)
         self._right_paned.add(mods_pane, minsize=140)
 
@@ -94,13 +90,8 @@ class ImageViewer(tk.Tk):
             "flip_v": self.flip_v,
         })
 
-        # Инициализация позиций «сашей»: левая панель уже есть; добавим и для правой вертикальной
         self.after(60, self._init_right_vertical_sash)
-
-        # Диалог коррекции — лениво создаём
         self._adj_win = None
-
-        # Изначально «толстая» левая панель: ~70%
         self.after(50, self._init_sash_wide_left)
 
     def _init_sash_wide_left(self):
@@ -116,12 +107,12 @@ class ImageViewer(tk.Tk):
         try:
             self.update_idletasks()
             h = self._right_paned.winfo_height()
-            y = int(h * 0.66)  # ~ верх (гистограмма+инфо) 2/3, низ (кнопки) 1/3
+            y = int(h * 0.66)
             self._right_paned.sash_place(0, 1, y)
         except Exception:
             pass
 
-    # --- загрузка ---
+    # загрузка
     def open_image(self):
         path = filedialog.askopenfilename(
             title="Выберите изображение",
@@ -142,7 +133,7 @@ class ImageViewer(tk.Tk):
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
 
-    # --- кнопки доступности ---
+    # кнопки
     def _update_buttons(self):
         has_img = self.ctrl.has_image()
         self.tools_panel.set_image_loaded(has_img)
@@ -163,7 +154,7 @@ class ImageViewer(tk.Tk):
         self.title(f"MVP: Просмотр + сведения — {self.image_canvas.zoom:.2f}x")
 
     def _repaint(self):
-        """Перерисовать картинку + инфо + гистограмму без тикания кнопок."""
+        """Перерисовать картинку + инфо + гистограмму без обновления кнопок"""
         self._render_zoomed()
         self._show_info()
         self.hist_panel.redraw()
@@ -173,7 +164,7 @@ class ImageViewer(tk.Tk):
         self._repaint()
         self._update_buttons()
 
-    # --- операции и история ---
+    # операции и история
     def _apply_and_push(self, transform_fn):
         if self.ctrl.apply_transform(transform_fn):
             self._render_zoomed()
@@ -201,7 +192,7 @@ class ImageViewer(tk.Tk):
         if self.ctrl.reset():
             self._refresh_all()
 
-    # --- предпросмотр оригинала при удержании ---
+    # предпросмотр оригинала при удержании
     def _preview_orig_press(self, _event=None):
         if self.ctrl.preview_original_start():
             self._render_zoomed();
@@ -214,11 +205,11 @@ class ImageViewer(tk.Tk):
             self._show_info();
             self.hist_panel.redraw()
 
-    # --- сводка о текущем изображении ---
+    # сводка о текущем изображении
     def _show_info(self):
         self.info_panel.set_text(self.ctrl.info_text())
 
-    # --- сохранение ---
+    # сохранение
     def save_as(self):
         if not self.ctrl.has_image():
             return
@@ -236,17 +227,14 @@ class ImageViewer(tk.Tk):
         )
         if not path:
             return
-        # БЫЛО: куча логики с ext = os.path.splitext(path)[1].lower  и save_img.save(...)
-        # СТАЛО:
         try:
             self.ctrl.save_as(path)
-            # обновим инфо, т.к. путь изменился
             self._show_info()
             messagebox.showinfo("Готово", f"Файл сохранён:\n{path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
-    # --- диалог коррекции B/S/C ---
+    # диалог коррекции B/S/C
     def open_adjust_dialog(self):
         if not self.ctrl.has_image():
             return
@@ -261,7 +249,6 @@ class ImageViewer(tk.Tk):
             self._repaint()
 
         def on_apply(b, s, c):
-            # откатываем времёнку и применяем как одну историю
             self.ctrl.set_temp_image(before)
             self.apply_bsc(b, s, c)
 
@@ -325,12 +312,10 @@ class ImageViewer(tk.Tk):
         if self.ctrl.flip_v():
             self._refresh_all()
 
-    # --- построение гистограммы (matplotlib) ---
+    # построение гистограммы (matplotlib)
     def _images_provider(self, kind: str):
         return self.ctrl.hist_image(kind)
 
-
-# --- запуск ---
 if __name__ == "__main__":
     app = ImageViewer()
     app.mainloop()
