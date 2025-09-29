@@ -19,7 +19,7 @@ def _build_levels_lut(black: int, white: int, gamma: float) -> list[int]:
         white = black + 1
     gamma = max(0.01, float(gamma))
     scale = 255.0 / (white - black)
-    inv_gamma = 1.0 / gamma
+
     lut: list[int] = []
     for x in range(256):
         if x <= black:
@@ -28,13 +28,14 @@ def _build_levels_lut(black: int, white: int, gamma: float) -> list[int]:
             y = 255.0
         else:
             y = ((x - black) * scale)
-            y = (y / 255.0) ** inv_gamma * 255.0
+            y = (y / 255.0) ** gamma * 255.0
         lut.append(int(round(max(0.0, min(255.0, y)))))
     return lut
 
+
 def bw_levels(img: Image.Image, black: int, white: int, gamma: float) -> Image.Image:
-    """Линейная (чёрн./бел. точки) + нелинейная (гамма) коррекция для Ч/Б.
-    Если вход не L — конвертируем в L перед LUT.
+    """Линейная и нелинейная коррекция чёрно-белого изображения
+    Если вход не L — сначала конвертируем в L.
     """
     lut = _build_levels_lut(black, white, gamma)
     imgL = img if img.mode == "L" else img.convert("L")

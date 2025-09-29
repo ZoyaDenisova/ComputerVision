@@ -13,6 +13,6 @@ class Model:
     icc_profile: Optional[bytes] = None
     history: History = field(default_factory=lambda: History(maxlen=100))  # <-- вот так
 
-    # показать оригинал (удерж.)
+    # показать оригинал
     preview_saved: Optional[Image.Image] = None
     preview_active: bool = False
