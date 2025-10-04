@@ -325,8 +325,12 @@ class MorphologyDialog(tk.Toplevel):
         self._maybe_preview()
 
     def _preset_values(self):
-        # основные + кастомные (в строгом порядке)
-        return self.PRESETS_MAIN + list(self.custom_presets.keys())
+        """Возвращает список значений для комбобокса, с визуальным разделителем."""
+        values = list(self.PRESETS_MAIN)
+        if self.custom_presets:
+            values.append("— Пользовательские —")
+            values.extend(self.custom_presets.keys())
+        return values
 
     def _refresh_preset_combobox(self):
         if not self._preset_box:
@@ -334,16 +338,28 @@ class MorphologyDialog(tk.Toplevel):
         cur = self.preset.get()
         vals = self._preset_values()
         self._preset_box.configure(values=vals)
-        # если текущего больше нет — откат на «Ручной»
+
         if cur not in vals:
             cur = "Ручной"
             self.preset.set(cur)
-        # выставляем текущий индекс
+
         try:
             self._preset_box.current(vals.index(cur))
         except ValueError:
-            # если внезапно не нашли — поставим 0
             self._preset_box.current(0)
+
+        # блокировка выбора разделителя
+        def on_select(event):
+            sel = self.preset.get()
+            if sel == "— Пользовательские —":
+                # возвращаемся на прошлый выбранный
+                self._preset_box.set(cur)
+                return
+            self._apply_preset()
+            self._maybe_preview()
+
+        self._preset_box.unbind("<<ComboboxSelected>>")
+        self._preset_box.bind("<<ComboboxSelected>>", on_select)
 
     def _presets_path(self):
         # можно поменять на свой путь приложения
