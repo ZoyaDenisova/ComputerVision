@@ -82,6 +82,7 @@ class ImageViewer(tk.Tk):
         # колбэки модификаторов
         self.tools_panel.set_callbacks({
             "morphology": self.open_morph_dialog,
+            "filters": self.open_filters_dialog,
             "grayscale": self.to_grayscale,
             "adjust": self.open_adjust_dialog,
             "bw": self.open_bw_dialog,
@@ -158,6 +159,32 @@ class ImageViewer(tk.Tk):
             self._repaint()
 
         self._morph_win = MorphologyDialog(self, before, on_preview, on_apply, on_cancel)
+
+    def open_filters_dialog(self):
+        if not self.ctrl.has_image():
+            return
+        if getattr(self, "_filters_win", None) and tk.Toplevel.winfo_exists(self._filters_win):
+            self._filters_win.lift()
+            return
+
+        before = self.model.current
+
+        def on_preview(img):
+            self.ctrl.set_temp_image(img)
+            self._repaint()
+
+        def on_apply(op, kernel, mode, normalize, extra):
+            self.ctrl.set_temp_image(before)
+            if self.ctrl.apply_filters(op, kernel, mode, normalize, extra):
+                self._refresh_all()
+
+        def on_cancel():
+            self.ctrl.set_temp_image(before)
+            self._repaint()
+
+        from imgviewer.ui.dialogs.filters import FiltersDialog
+        self._filters_win = FiltersDialog(self, before, on_preview, on_apply, on_cancel)
+
     # кнопки
     def _update_buttons(self):
         has_img = self.ctrl.has_image()

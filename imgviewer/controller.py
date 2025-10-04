@@ -57,6 +57,9 @@ class Controller:
         self.m.current = new_im
         return True
 
+    def apply_filters(self, op: str, kernel, mode: str, normalize: bool, extra: dict) -> bool:
+        return self.apply_transform(lambda im: Sx.filter_apply(im, op, kernel, mode, normalize, extra))
+
     def undo(self) -> bool:
         if self.m.current is None or not self.m.history:
             return False
