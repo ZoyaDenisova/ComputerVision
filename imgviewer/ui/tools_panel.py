@@ -32,6 +32,7 @@ class ToolsPanel(tk.Frame):
 
         # кнопки
         self.btns = {}
+        self.btns["morphology"] = self._mk_button("Морфология…", pady=(0,8))
         self.btns["grayscale"] = self._mk_button("В градации серого")
         self.btns["adjust"]    = self._mk_button("Коррекция…")
         self.btns["bw"]        = self._mk_button("Коррекция Ч/Б…", pady=(6,6))

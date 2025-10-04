@@ -2,6 +2,7 @@ from __future__ import annotations
 from PIL import Image
 from imgviewer.model import Model
 from imgviewer.services import io as Sio, metadata as Smeta, transforms as Sx
+import numpy as np
 
 class Controller:
     def __init__(self, model: Model):
@@ -126,3 +127,8 @@ class Controller:
 
     def flip_v(self) -> bool:
         return self.apply_transform(lambda im: Sx.flip_v(im))
+
+    def apply_morph(self, op: str, kernel_matrix, iterations: int, mode: str) -> bool:
+        return self.apply_transform(
+            lambda im: Sx.morph_apply(im, op, np.array(kernel_matrix, dtype='uint8'), iterations, mode)
+        )

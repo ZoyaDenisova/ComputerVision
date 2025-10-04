@@ -6,6 +6,7 @@ from tkinter import simpledialog
 from imgviewer.ui import ImageCanvas, HistogramPanel, InfoPanel, ToolsPanel
 from imgviewer.ui.dialogs.adjust_bsc import AdjustBSCDialog
 from imgviewer.ui.dialogs.bw_levels import BWLevelsDialog
+from imgviewer.ui.dialogs.morphology import MorphologyDialog
 
 
 # приложение
@@ -80,6 +81,7 @@ class ImageViewer(tk.Tk):
 
         # колбэки модификаторов
         self.tools_panel.set_callbacks({
+            "morphology": self.open_morph_dialog,
             "grayscale": self.to_grayscale,
             "adjust": self.open_adjust_dialog,
             "bw": self.open_bw_dialog,
@@ -133,6 +135,29 @@ class ImageViewer(tk.Tk):
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
 
+    def open_morph_dialog(self):
+        if not self.ctrl.has_image():
+            return
+        if getattr(self, "_morph_win", None) and tk.Toplevel.winfo_exists(self._morph_win):
+            self._morph_win.lift()
+            return
+
+        before = self.model.current
+
+        def on_preview(img):
+            self.ctrl.set_temp_image(img)
+            self._repaint()
+
+        def on_apply(op, kernel, iterations, mode):
+            self.ctrl.set_temp_image(before)
+            if self.ctrl.apply_morph(op, kernel, iterations, mode):
+                self._refresh_all()
+
+        def on_cancel():
+            self.ctrl.set_temp_image(before)
+            self._repaint()
+
+        self._morph_win = MorphologyDialog(self, before, on_preview, on_apply, on_cancel)
     # кнопки
     def _update_buttons(self):
         has_img = self.ctrl.has_image()

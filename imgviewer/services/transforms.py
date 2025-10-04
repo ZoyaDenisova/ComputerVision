@@ -1,5 +1,7 @@
 from __future__ import annotations
 from PIL import Image, ImageEnhance
+import numpy as np
+import cv2
 
 def to_grayscale(img: Image.Image) -> Image.Image:
     """Градации серого"""
@@ -60,3 +62,83 @@ def flip_h(img: Image.Image) -> Image.Image:
 
 def flip_v(img: Image.Image) -> Image.Image:
     return img.transpose(Image.FLIP_TOP_BOTTOM)
+
+def _pil_to_cv_gray(img: Image.Image) -> np.ndarray:
+    """PIL -> OpenCV (uint8, однотоновое)"""
+    if img.mode != "L":
+        img = img.convert("L")
+    return np.array(img, dtype=np.uint8)
+
+def _pil_to_cv_bgr(img: Image.Image) -> np.ndarray:
+    """PIL -> OpenCV (BGR)"""
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    arr = np.array(img, dtype=np.uint8)
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+
+def _cv_to_pil_from_gray(arr: np.ndarray) -> Image.Image:
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, mode="L")
+
+def _cv_to_pil_from_bgr(arr: np.ndarray) -> Image.Image:
+    arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, mode="RGB")
+
+_MORPH_MAP = {
+    "erosion":        ("basic", cv2.erode),
+    "dilation":       ("basic", cv2.dilate),
+    "opening":        ("ex",    cv2.MORPH_OPEN),
+    "closing":        ("ex",    cv2.MORPH_CLOSE),
+    "gradient":       ("ex",    cv2.MORPH_GRADIENT),
+    "tophat":         ("ex",    cv2.MORPH_TOPHAT),     # «Цилиндр/топ-хэт»
+    "blackhat":       ("ex",    cv2.MORPH_BLACKHAT),   # «Чёрная шляпа»
+}
+
+def _ensure_kernel(matrix_01: np.ndarray) -> np.ndarray:
+    """0/1 -> uint8 ядро для OpenCV; если всё нули — ставим центр = 1."""
+    k = (matrix_01 > 0).astype(np.uint8)
+    if k.sum() == 0:
+        cy, cx = k.shape[0] // 2, k.shape[1] // 2
+        k[cy, cx] = 1
+    return k
+
+def morph_apply(img: Image.Image,
+                op: str,
+                kernel_matrix: np.ndarray,
+                iterations: int = 1,
+                mode: str = "L") -> Image.Image:
+    """
+    Применение морфологических операций через OpenCV.
+    op: 'erosion'|'dilation'|'opening'|'closing'|'gradient'|'tophat'|'blackhat'
+    kernel_matrix: 2D ndarray из 0/1
+    iterations: >=1
+    mode: 'L' — конвертировать в серое; 'RGB' — по каналам
+    """
+    if op not in _MORPH_MAP:
+        raise ValueError(f"Unknown morph op: {op}")
+    iterations = max(1, int(iterations))
+    kernel = _ensure_kernel(np.asarray(kernel_matrix, dtype=np.uint8))
+
+    kind, fn = _MORPH_MAP[op]
+
+    if mode == "L":
+        src = _pil_to_cv_gray(img)
+        if kind == "basic":
+            out = fn(src, kernel, iterations=iterations)
+        else:
+            out = cv2.morphologyEx(src, fn, kernel, iterations=iterations)
+        return _cv_to_pil_from_gray(out)
+
+    # RGB по каналам (обработка в BGR, но поканально)
+    src_bgr = _pil_to_cv_bgr(img)
+    channels = cv2.split(src_bgr)  # B, G, R
+    out_ch = []
+    for chan in channels:
+        if kind == "basic":
+            ch = fn(chan, kernel, iterations=iterations)
+        else:
+            ch = cv2.morphologyEx(chan, fn, kernel, iterations=iterations)
+        out_ch.append(ch)
+    out_bgr = cv2.merge(out_ch)
+    return _cv_to_pil_from_bgr(out_bgr)
