@@ -3,6 +3,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
 import numpy as np
+import os, json
+from tkinter import simpledialog
 
 class MorphologyDialog(tk.Toplevel):
     OPS = [
@@ -14,7 +16,7 @@ class MorphologyDialog(tk.Toplevel):
         ("Цилиндр (Top-hat)", "tophat"),
         ("Чёрная шляпа", "blackhat"),
     ]
-    PRESETS = ["Ручной", "Квадрат", "Крест", "Эллипс", "Ромб", "Центр"]
+    PRESETS_MAIN = ["Ручной", "Квадрат", "Крест", "Эллипс", "Ромб", "Центр"]
 
     def __init__(self, master, before_img, on_preview, on_apply, on_cancel):
         super().__init__(master)
@@ -37,6 +39,9 @@ class MorphologyDialog(tk.Toplevel):
         self.lock_square = tk.BooleanVar(value=True)   # 1:1
         self.preview_auto = tk.BooleanVar(value=True)  # чекбокс «Предпросмотр» (как в коррекции)
         self._drag_value = None  # 0 или 1 в текущем «мазке»
+        self.custom_presets = {}  # dict: name -> 2D list (0/1)
+        self._preset_box = None  # ссылка на комбобокс пресетов
+        self._load_custom_presets()
 
         # ядро (0/1)
         self._kernel = np.ones((self.rows.get(), self.cols.get()), dtype=np.uint8)
@@ -97,10 +102,27 @@ class MorphologyDialog(tk.Toplevel):
                         ).pack(side=tk.LEFT, padx=(12, 0))
 
         # Пресеты
-        ttk.Label(top, text="Пресет ядра:").grid(row=2, column=0, sticky="w", pady=(8,0))
-        preset_box = ttk.Combobox(top, values=self.PRESETS, state="readonly", textvariable=self.preset)
-        preset_box.grid(row=2, column=1, sticky="we", padx=(6,0), pady=(8,0))
-        preset_box.bind("<<ComboboxSelected>>", lambda _e: (self._apply_preset(), self._maybe_preview()))
+        ttk.Label(top, text="Пресет ядра:").grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        preset_row = ttk.Frame(top)
+        preset_row.grid(row=2, column=1, sticky="we", padx=(6, 0), pady=(8, 0))
+        preset_row.grid_columnconfigure(0, weight=1)
+
+        self._preset_box = ttk.Combobox(preset_row, state="readonly", textvariable=self.preset,
+                                        values=self._preset_values())
+        self._preset_box.grid(row=0, column=0, sticky="we")
+        # выбор из списка -> применить пресет
+        self._preset_box.bind("<<ComboboxSelected>>",
+                              lambda _e: (self._apply_preset(), self._maybe_preview()))
+
+        # Кнопки управления кастомными пресетами
+        save_btn = ttk.Button(preset_row, text="Сохранить…", width=12, command=self._save_current_as_preset)
+        ren_btn = ttk.Button(preset_row, text="Переименовать…", width=14, command=self._rename_current_preset)
+        del_btn = ttk.Button(preset_row, text="Удалить", width=10, command=self._delete_current_preset)
+
+        save_btn.grid(row=0, column=1, padx=(6, 0))
+        ren_btn.grid(row=0, column=2, padx=(6, 0))
+        del_btn.grid(row=0, column=3, padx=(6, 0))
 
         # Режим
         mode_fr = ttk.Frame(top); mode_fr.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8,0))
@@ -143,6 +165,7 @@ class MorphologyDialog(tk.Toplevel):
         ttk.Button(btn_fr, text="Применить", command=self._apply).pack(side=tk.RIGHT, padx=(8,6))
         ttk.Button(btn_fr, text="Отмена", command=self._cancel).pack(side=tk.RIGHT, padx=(0,6))
         self._sync_cols_spin_state()
+        self._refresh_preset_combobox()
 
     # ---------------- helpers/logic ----------------
     def _force_odd(self, v: int) -> int:
@@ -202,15 +225,28 @@ class MorphologyDialog(tk.Toplevel):
     def _apply_preset(self):
         r, c = self.rows.get(), self.cols.get()
         name = self.preset.get()
-        k = np.zeros((r, c), dtype=np.uint8)
         cy, cx = r // 2, c // 2
+
+        # 1) Кастомные пресеты (имя не из PRESETS_MAIN)
+        if name not in self.PRESETS_MAIN and name in self.custom_presets:
+            src = np.array(self.custom_presets[name], dtype=np.uint8)
+            # подгоняем сохранённую матрицу под текущий размер (без изменения сохранённого пресета)
+            self._kernel = self._resize_manual(src, r, c)
+            self._redraw_canvas()
+            return
+
+        # 2) Встроенные пресеты
+        k = np.zeros((r, c), dtype=np.uint8)
         if name == "Квадрат":
             k[:, :] = 1
         elif name == "Крест":
-            k[cy, :] = 1; k[:, cx] = 1; k[cy, cx] = 1
+            k[cy, :] = 1;
+            k[:, cx] = 1;
+            k[cy, cx] = 1
         elif name == "Эллипс":
             y, x = np.ogrid[:r, :c]
-            ry = max(1, r // 2); rx = max(1, c // 2)
+            ry = max(1, r // 2);
+            rx = max(1, c // 2)
             mask = ((y - cy) ** 2) / (ry ** 2) + ((x - cx) ** 2) / (rx ** 2) <= 1.0
             k[mask] = 1
         elif name == "Ромб":
@@ -222,8 +258,118 @@ class MorphologyDialog(tk.Toplevel):
             k[cy, cx] = 1
         elif name == "Ручной":
             k = self._resize_manual(getattr(self, "_kernel", np.zeros((r, c), dtype=np.uint8)), r, c)
+
         self._kernel = k
         self._redraw_canvas()
+
+    def _ask_preset_name(self, title, initial=""):
+        name = simpledialog.askstring(title, "Введите имя пресета:", initialvalue=initial, parent=self)
+        if name is None:
+            return None
+        name = name.strip()
+        if not name:
+            messagebox.showwarning("Имя пресета", "Имя не может быть пустым.")
+            return None
+        if name in self.PRESETS_MAIN:
+            messagebox.showwarning("Имя пресета", "Это имя зарезервировано системным пресетом.")
+            return None
+        return name
+
+    def _save_current_as_preset(self):
+        # берём текущую матрицу как есть (не важно, какой пресет выбран)
+        name = self._ask_preset_name("Сохранить пресет")
+        if not name:
+            return
+        # копия текущего ядра
+        k = np.array(self._kernel, dtype=np.uint8).tolist()
+        self.custom_presets[name] = k
+        self._save_custom_presets()
+        # обновить комбобокс и выбрать новый
+        self._refresh_preset_combobox()
+        self.preset.set(name)
+        self._refresh_preset_combobox()
+        # применить (на случай если размеры отличаются)
+        self._apply_preset()
+        self._maybe_preview()
+
+    def _rename_current_preset(self):
+        cur = self.preset.get()
+        if cur in self.PRESETS_MAIN or cur not in self.custom_presets:
+            messagebox.showinfo("Переименование", "Переименовать можно только пользовательский пресет.")
+            return
+        new_name = self._ask_preset_name("Переименовать пресет", initial=cur)
+        if not new_name:
+            return
+        if new_name in self.custom_presets:
+            messagebox.showwarning("Имя пресета", "Такое имя уже используется среди пользовательских пресетов.")
+            return
+        # перенос
+        self.custom_presets[new_name] = self.custom_presets.pop(cur)
+        self._save_custom_presets()
+        self.preset.set(new_name)
+        self._refresh_preset_combobox()
+
+    def _delete_current_preset(self):
+        cur = self.preset.get()
+        if cur in self.PRESETS_MAIN or cur not in self.custom_presets:
+            messagebox.showinfo("Удаление пресета", "Удалять можно только пользовательский пресет.")
+            return
+        if not messagebox.askyesno("Удалить пресет", f"Удалить пользовательский пресет «{cur}»?"):
+            return
+        self.custom_presets.pop(cur, None)
+        self._save_custom_presets()
+        # откат на «Ручной»
+        self.preset.set("Ручной")
+        self._refresh_preset_combobox()
+        self._apply_preset()
+        self._maybe_preview()
+
+    def _preset_values(self):
+        # основные + кастомные (в строгом порядке)
+        return self.PRESETS_MAIN + list(self.custom_presets.keys())
+
+    def _refresh_preset_combobox(self):
+        if not self._preset_box:
+            return
+        cur = self.preset.get()
+        vals = self._preset_values()
+        self._preset_box.configure(values=vals)
+        # если текущего больше нет — откат на «Ручной»
+        if cur not in vals:
+            cur = "Ручной"
+            self.preset.set(cur)
+        # выставляем текущий индекс
+        try:
+            self._preset_box.current(vals.index(cur))
+        except ValueError:
+            # если внезапно не нашли — поставим 0
+            self._preset_box.current(0)
+
+    def _presets_path(self):
+        # можно поменять на свой путь приложения
+        base = os.path.expanduser("~")
+        cfg_dir = os.path.join(base, ".imgviewer")
+        os.makedirs(cfg_dir, exist_ok=True)
+        return os.path.join(cfg_dir, "morph_custom_presets.json")
+
+    def _load_custom_presets(self):
+        try:
+            with open(self._presets_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # в файле ожидаем {"name":[[0,1,...],[...],...]}
+            self.custom_presets = {k: v for k, v in data.items() if isinstance(v, list)}
+        except FileNotFoundError:
+            self.custom_presets = {}
+        except Exception:
+            # если файл битый — не падаем
+            self.custom_presets = {}
+
+    def _save_custom_presets(self):
+        try:
+            with open(self._presets_path(), "w", encoding="utf-8") as f:
+                json.dump(self.custom_presets, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            messagebox.showerror("Сохранение пресетов", f"Не удалось сохранить пресеты:\n{e}")
 
     # ---------------- Canvas grid ----------------
     def _grid_geom(self):
